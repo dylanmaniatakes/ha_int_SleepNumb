@@ -197,6 +197,7 @@ class BleBridgeClient:
         path = "/org/bluez/dev_" + self.address.replace(":", "_").upper()
         agent_registered = False
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        import traceback
         try:
             # BlueZ nests devices under their adapter ("hci0/dev_…") — never
             # guess the hci index; enumerate ObjectManager and find the
@@ -290,6 +291,10 @@ class BleBridgeClient:
                 "BlueZ bond with %s established and trusted — controller writes should now be accepted",
                 self.address,
             )
+        except Exception as err:  # noqa: BLE001 — surface the real failing frame
+            raise RuntimeError(
+                f"pair-via-bluez failed: {err} | TB: {traceback.format_exc()}"
+            ) from err
         finally:
             if agent_registered:
                 with contextlib.suppress(Exception):
