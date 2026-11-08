@@ -39,6 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.LIGHT,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
@@ -116,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SleepNumberConfigEntry) 
             )
 
     status = SleepNumberStatusCoordinator(hass, entry, client, local=local)
-    settings = SleepNumberSettingsCoordinator(hass, entry, client)
+    settings = SleepNumberSettingsCoordinator(hass, entry, client, ble=ble)
     sleep = SleepNumberSleepDataCoordinator(hass, entry, client)
 
     await status.async_config_entry_first_refresh()
@@ -131,6 +132,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: SleepNumberConfigEntry) 
         capabilities=capabilities,
         ble=ble,
     )
+    # Mirror the ASCII-plane detection into capabilities for the platforms
+    # (light/foot warm only register when the 360-gen controller answered).
+    if ble is not None and ble.mode == "ascii":
+        capabilities["ascii"] = True
+        _LOGGER.info(
+            "360-gen controller answered on the ASCII bamkey plane — "
+            "under-bed light, foot warmer and live pressure entities enabled"
+        )
 
     # Register the bed hub devices before the platforms run, so sleeper
     # entities can link via_device_id to an already-registered parent.

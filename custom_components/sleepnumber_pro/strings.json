@@ -1,86 +1,134 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "Sleep Number (SleepIQ) account",
-        "description": "Sign in with your SleepIQ account. If you have rooted your hub and installed the local bridge, add its address to prefer local, cloud-free operation.",
-        "data": {
-          "username": "Email",
-          "password": "Password",
-          "local_host": "Local hub address (optional)",
-          "local_token": "Local bridge token (optional)"
-        }
-      },
-      "reconfigure": {
-        "title": "Reconfigure Sleep Number",
-        "description": "Update your credentials or add the local hub bridge address to switch to local-first operation.",
-        "data": {
-          "username": "Email",
-          "password": "Password",
-          "local_host": "Local hub address (optional)",
-          "local_token": "Local bridge token (optional)"
-        }
-      },
-      "reauth_confirm": {
-        "title": "Re-authenticate SleepIQ",
-        "description": "Your SleepIQ session for {username} is no longer valid. Enter your password to sign in again.",
-        "data": {
-          "password": "Password"
-        }
-      }
-    },
-    "error": {
-      "invalid_auth": "Invalid email or password.",
-      "cannot_connect": "Could not reach the SleepIQ service. Check your connection and try again."
-    },
-    "abort": {
-      "already_configured": "This SleepIQ account is already set up.",
-      "reauth_successful": "Re-authentication was successful.",
-      "reconfigure_successful": "Reconfiguration was successful."
+ "config": {
+  "step": {
+   "user": {
+    "title": "Sleep Number (SleepIQ) account",
+    "description": "Sign in with your SleepIQ account. If you have rooted your hub and installed the local bridge, add its address to prefer local, cloud-free operation.",
+    "data": {
+     "username": "Email",
+     "password": "Password",
+     "local_host": "Local hub address (optional)",
+     "local_token": "Local bridge token (optional)"
     }
+   },
+   "reconfigure": {
+    "title": "Reconfigure Sleep Number",
+    "description": "Update your credentials or add the local hub bridge address to switch to local-first operation.",
+    "data": {
+     "username": "Email",
+     "password": "Password",
+     "local_host": "Local hub address (optional)",
+     "local_token": "Local bridge token (optional)"
+    }
+   },
+   "reauth_confirm": {
+    "title": "Re-authenticate SleepIQ",
+    "description": "Your SleepIQ session for {username} is no longer valid. Enter your password to sign in again.",
+    "data": {
+     "password": "Password"
+    }
+   }
   },
-  "entity": {
-    "binary_sensor": {
-      "is_in_bed": { "name": "In bed" }
-    },
-    "sensor": {
-      "sleep_number": { "name": "Sleep number" },
-      "pressure": { "name": "Pressure" },
-      "sleep_score": { "name": "Sleep score" },
-      "heart_rate": { "name": "Heart rate" },
-      "respiratory_rate": { "name": "Respiratory rate" },
-      "hrv": { "name": "Heart rate variability" },
-      "sleep_duration": { "name": "Sleep duration" },
-      "restful": { "name": "Restful time" },
-      "restless": { "name": "Restless time" },
-      "connection": {
-        "name": "Connection",
-        "state": { "ble": "Bluetooth", "local": "Local", "cloud": "Cloud" }
-      }
-    },
-    "number": {
-      "sleep_number": { "name": "Sleep number" }
-    },
-    "select": {
-      "base_preset": {
-        "name": "Base preset",
-        "state": {
-          "flat": "Flat",
-          "zero_g": "Zero G",
-          "read": "Read",
-          "watch_tv": "Watch TV",
-          "snore": "Snore",
-          "favorite": "Favorite"
-        }
-      }
-    },
-    "switch": {
-      "responsive_air": { "name": "Responsive Air" },
-      "privacy": { "name": "Privacy pause" }
-    },
-    "button": {
-      "calibrate": { "name": "Calibrate" },
-      "stop_pump": { "name": "Stop pump" }
-    }
+  "error": {
+   "invalid_auth": "Invalid email or password.",
+   "cannot_connect": "Could not reach the SleepIQ service. Check your connection and try again."
+  },
+  "abort": {
+   "already_configured": "This SleepIQ account is already set up.",
+   "reauth_successful": "Re-authentication was successful.",
+   "reconfigure_successful": "Reconfiguration was successful."
   }
+ },
+ "entity": {
+  "binary_sensor": {
+   "is_in_bed": {
+    "name": "In bed"
+   }
+  },
+  "sensor": {
+   "sleep_number": {
+    "name": "Sleep number"
+   },
+   "pressure": {
+    "name": "Pressure"
+   },
+   "sleep_score": {
+    "name": "Sleep score"
+   },
+   "heart_rate": {
+    "name": "Heart rate"
+   },
+   "respiratory_rate": {
+    "name": "Respiratory rate"
+   },
+   "hrv": {
+    "name": "Heart rate variability"
+   },
+   "sleep_duration": {
+    "name": "Sleep duration"
+   },
+   "restful": {
+    "name": "Restful time"
+   },
+   "restless": {
+    "name": "Restless time"
+   },
+   "connection": {
+    "name": "Connection",
+    "state": {
+     "ble": "Bluetooth",
+     "local": "Local",
+     "cloud": "Cloud"
+    }
+   }
+  },
+  "number": {
+   "sleep_number": {
+    "name": "Sleep number"
+   }
+  },
+  "select": {
+   "base_preset": {
+    "name": "Base preset",
+    "state": {
+     "flat": "Flat",
+     "zero_g": "Zero G",
+     "read": "Read",
+     "watch_tv": "Watch TV",
+     "snore": "Snore",
+     "favorite": "Favorite"
+    }
+   },
+   "foot_warmer": {
+    "name": "Foot warmer",
+    "state": {
+     "off": "Off",
+     "low": "Low",
+     "medium": "Medium",
+     "high": "High"
+    }
+   }
+  },
+  "switch": {
+   "responsive_air": {
+    "name": "Responsive Air"
+   },
+   "privacy": {
+    "name": "Privacy pause"
+   }
+  },
+  "button": {
+   "calibrate": {
+    "name": "Calibrate"
+   },
+   "stop_pump": {
+    "name": "Stop pump"
+   }
+  },
+  "light": {
+   "underbed_light": {
+    "name": "Under-bed light"
+   }
+  }
+ }
 }

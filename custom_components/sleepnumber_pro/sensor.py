@@ -59,7 +59,8 @@ LIVE_SENSORS: tuple[SleepNumberSensorDescription, ...] = (
         key=PRESSURE,
         translation_key=PRESSURE,
         state_class=SensorStateClass.MEASUREMENT,
-        entity_registry_enabled_default=False,
+        # Live over the ASCII plane (360-gen controller SNCG), cloud fallback:
+        # enabled by default now that a local source exists.
         value_fn=lambda s: s.pressure or None,
     ),
 )

@@ -9,7 +9,7 @@ control the cloud gave up.
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, HomeAssistantError, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import mcr
@@ -72,8 +72,22 @@ class BasePresetSelect(CoordinatorEntity, SelectEntity):
         super()._handle_coordinator_update()
 
     async def async_select_option(self, option: str) -> None:
-        preset = PRESET_OPTIONS[option]
         side = mcr.SIDE_LEFT if self.sleeper.side == Side.LEFT else mcr.SIDE_RIGHT
-        await self._ble.activate_preset(side, preset)
+        side_word = "left" if self.sleeper.side == Side.LEFT else "right"
+        if getattr(self._ble, "mode", None) == "ascii":
+            # 360-gen controller: presets are bed-level words (single-motor base
+            # moves both sides); "favorite" = recall the stored sleep number.
+            if option == "favorite":
+                await self.coordinator.async_request_refresh()
+                snap = getattr(self.coordinator, "_ascii_snap", None)
+                fav = (snap.fav_left if side_word == "left" else snap.fav_right) if snap else None
+                if fav is None:
+                    raise HomeAssistantError("favorite sleep number not known yet")
+                await self._ble.ascii_set_sleep_number(side_word, fav)
+            else:
+                await self._ble.ascii_preset(side_word, option)
+        else:
+            preset = PRESET_OPTIONS[option]
+            await self._ble.activate_preset(side, preset)
         self._attr_current_option = option
         self.async_write_ha_state()

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 
 from . import mcr
+from . import bamkey_ascii
 from .const import SOURCE_BLE
 from .local import LocalStatus
 
@@ -40,6 +42,10 @@ class BleBridgeClient:
         self.address = address
         self.bed_addr = mcr.bed_addr_from_mac(address)
         self._lock = asyncio.Lock()
+        # ASCII bamkey plane lifecycle (360-gen controller). Instance state —
+        # baselines are per-connection learned values, never class-level.
+        self.mode = "unknown"   # "ascii" | "mcr" | "unknown"
+        self.baselines = {}     # side → rolling empty-bed pressure
 
     def _ble_device(self):
         """Resolve a connectable BLEDevice via HA's Bluetooth stack, or None."""
@@ -132,6 +138,186 @@ class BleBridgeClient:
 
     async def activate_preset(self, side: int, preset: int) -> None:
         await self._run([(mcr.build_preset(self.bed_addr, side, preset), mcr.FUNC_PRESET)])
+
+    # ------------------------------------------------------------------
+    # ASCII bamkey plane (360-gen hub, wire-verified 2026-11-08): the hub's
+    # UART characteristic accepts fUzIoN-framed ASCII commands and returns
+    # PASS: responses read from the SAME char. See bamkey_ascii.py + the RE
+    # workspace bamkey_reference.md. Feature methods below; the coordinator
+    # prefers these when ASCII detection answers (BED supports all of them
+    # regardless of the MCR firmware plane).
+    # ------------------------------------------------------------------
+
+    ASCII_BATCH = [  # live BAMG order (dashboard query)
+        ("UBLG", ""), ("SNCG", "left"), ("SNFG", "left"),
+        ("ACTG", "left head"), ("ACTG", "left foot"), ("ACGP", "left"), ("AGCP", "left"),
+        ("UBAG", ""), ("SNCG", "right"), ("SNFG", "right"),
+        ("ACTG", "right head"), ("ACTG", "right foot"), ("ACGP", "right"), ("AGCP", "right"),
+    ]
+
+    async def _ascii_session(self, job):
+        """Open one GATT session, run a job(client), answer via ASCII plane."""
+        from bleak_retry_connector import establish_connection
+
+        device = self._ble_device()
+        if device is None:
+            raise BleUnavailable(f"{self.address} not in range / no proxy")
+        async with self._lock:
+            client = await establish_connection(
+                __import__("bleak").BleakClient, device, self.address
+            )
+            try:
+                return await job(_AsciiIO(client, RX_UUID))
+            finally:
+                await client.disconnect()
+
+    async def _ascii_command(self, cmd: str, **kw) -> str:
+        async def job(io):
+            return await io.command(cmd, **kw)
+        return await self._ascii_session(job)
+
+    async def ascii_dashboard(self) -> list[str]:
+        """One BAMG batch — every dashboard state in one round trip."""
+        frame = bamkey_ascii.build_ascii_frame(
+            "BAMG " + json.dumps(
+                [{"bamkey": k, "args": a} for k, a in self.ASCII_BATCH],
+                separators=(",", ":"),
+            )
+        )
+        async def job(io):
+            return await io.command_prebuilt(frame)
+        return await self._ascii_session(job)
+
+    async def ascii_set_sleep_number(self, side: str, value: int) -> None:
+        """PSNS <side> <value>, then poll SNCG until the pump settles."""
+        async def job(io):
+            await io.command(f"PSNS {side} {int(value)}")
+            deadline = asyncio.get_event_loop().time() + 120
+            while True:
+                await asyncio.sleep(1.2)
+                try:
+                    val = await io.command(f"SNCG {side}")
+                except Exception:  # noqa: BLE001 — keep polling through hiccups
+                    continue
+                if val.split() and val.split()[0] == "0":
+                    return
+                if asyncio.get_event_loop().time() > deadline:
+                    raise TimeoutError(f"{side} did not settle")
+        await self._ascii_session(job)
+
+    async def ascii_preset(self, side: str, name: str) -> None:
+        """ASTP <side> <name> — bed-level (single-motor base moves both sides).
+
+        Verified names: "snore", "flat". Unverified repo option names get
+        candidate fallbacks; a FAIL:<code> reply raises and the caller keeps its
+        previous state rather than silently mis-setting the base.
+        """
+        candidates = self.ASCII_PRESET_CANDIDATES.get(name, [name])
+        last: Exception | None = None
+        for word in candidates:
+            try:
+                await self._ascii_command(f"ASTP {side} {word}")
+                return
+            except Exception as err:  # noqa: BLE001 — try the next spelling
+                last = err
+        raise last or TimeoutError(f"no candidate accepted for preset {name!r}")
+
+    ASCII_PRESET_CANDIDATES = {
+        "flat": ["flat"],
+        "snore": ["snore"],
+        "read": ["read"],
+        "watch_tv": ["watch_tv", "tv", "watch tv"],
+        "zero_g": ["zero_g", "zero g", "zerog"],
+    }
+
+    async def ascii_light(self, level: str, minutes: int = 0) -> None:
+        await self._ascii_command(f"UBLS {level} {int(minutes)}")
+
+    async def ascii_light_auto(self, enabled: bool, level: str = "low") -> None:
+        await self._ascii_command(f"UBAS {'true' if enabled else 'false'} {level}")
+
+    async def ascii_foot_warm(self, side: str, level: str, minutes: int = 120) -> None:
+        await self._ascii_command(f"FWTS {side} {level} {int(minutes)}")
+
+    async def ascii_time_sync(self, iso: str) -> None:
+        await self._ascii_command(f"SYTS {iso}")
+
+    # ------------------------------------------------------------------
+    # ASCII-mode lifecycle: detection, snapshot, baseline learning.
+    # ------------------------------------------------------------------
+
+    mode: str = "unknown"  # "ascii" | "mcr" | "unknown"
+    baselines: dict = {}   # side → rolling empty-bed pressure (learned in-memory)
+
+    async def detect_ascii(self) -> bool:
+        """One cheap probe: UBLG answers PASS on the ASCII plane.
+
+        Records the mode so the coordinator can prefer ASCII and still fall
+        back to the binary MCR path (older BAM pump firmware) when this hub
+        generation is not present.
+        """
+        try:
+            await self._ascii_command("UBLG")
+        except Exception:  # noqa: BLE001 — no ASCII plane here: fall back to MCR
+            self.mode = "mcr"
+            return False
+        self.mode = "ascii"
+        return True
+
+    async def ascii_snapshot(self) -> "bamkey_ascii.AsciiSnapshot":
+        """One BAMG batch → decoded snapshot; learns empty-baselines per side.
+
+        Baselines are slow minima: when a side is NOT adjusting and its pressure
+        is the lowest seen since process start, that becomes the rolling
+        baseline. Presence derives from baseline + threshold elsewhere; the
+        learning resets on integration reload (documented in NOTES).
+        """
+        snapshot = bamkey_ascii.snapshot_from_batch(await self.ascii_dashboard())
+        for side, state in (("left", snapshot.sn_left), ("right", snapshot.sn_right)):
+            if state is None or state.adjusting:
+                continue
+            known = self.baselines.get(side)
+            if known is None or state.pressure < known:
+                self.baselines[side] = state.pressure
+        return snapshot
+
+
+class _AsciiIO:
+    """Thin write/read-back wrapper used inside one established GATT session."""
+
+    def __init__(self, client, uart_char: str) -> None:
+        self.client = client
+        self.uart_char = uart_char
+
+    async def command(self, cmd: str, **kwargs) -> str:
+        frame = bamkey_ascii.build_ascii_frame(cmd)
+        await self.client.write_gatt_char(self.uart_char, frame, response=True)
+        await asyncio.sleep(0.05)
+        for _ in range(12):
+            try:
+                resp = await self.client.read_gatt_char(self.uart_char)
+            except Exception:  # noqa: BLE001 — transient; retry inside window
+                resp = b""
+            frames = bamkey_ascii.parse_ascii_frames(resp or b"")
+            if frames:
+                return bamkey_ascii.parse_response(frames[0])
+            await asyncio.sleep(0.08)
+        raise TimeoutError(f"no ASCII response to {cmd!r}")
+
+    async def command_prebuilt(self, frame: bytes) -> list[str]:
+        """Write a pre-built frame (e.g. a big BAMG batch); read the response."""
+        await self.client.write_gatt_char(self.uart_char, frame, response=True)
+        await asyncio.sleep(0.1)
+        for _ in range(15):
+            try:
+                resp = await self.client.read_gatt_char(self.uart_char)
+            except Exception:  # noqa: BLE001
+                resp = b""
+            frames = bamkey_ascii.parse_ascii_frames(resp or b"")
+            if frames:
+                return bamkey_ascii.parse_batch(frames[0])
+            await asyncio.sleep(0.08)
+        raise TimeoutError("no ASCII batch response")
 
 
 class BleUnavailable(Exception):

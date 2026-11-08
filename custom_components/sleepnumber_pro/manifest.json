@@ -1,34 +1,34 @@
 {
-  "domain": "sleepnumber_pro",
-  "name": "Sleep Number (SleepIQ) Local-First",
-  "bluetooth": [
-    {
-      "service_uuid": "ffffd1fd-388d-938b-344a-939d1f6efee0"
-    },
-    {
-      "service_uuid": "09d23fae-90e6-44c2-95b6-0b3d0f1abf25"
-    },
-    {
-      "manufacturer_id": 20051
-    }
-  ],
-  "codeowners": [
-    "@trooperthorn"
-  ],
-  "config_flow": true,
-  "dependencies": [],
-  "dhcp": [
-    {
-      "macaddress": "64DBA0*"
-    }
-  ],
-  "documentation": "https://github.com/trooperthorn/ha_int_SleepNumb",
-  "integration_type": "hub",
-  "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/trooperthorn/ha_int_SleepNumb/issues",
-  "loggers": [
-    "sleepiq_local"
-  ],
-  "requirements": [],
-  "version": "2026.10.09.1"
+ "domain": "sleepnumber_pro",
+ "name": "Sleep Number (SleepIQ) Local-First",
+ "bluetooth": [
+  {
+   "service_uuid": "ffffd1fd-388d-938b-344a-939d1f6efee0"
+  },
+  {
+   "service_uuid": "09d23fae-90e6-44c2-95b6-0b3d0f1abf25"
+  },
+  {
+   "manufacturer_id": 20051
+  }
+ ],
+ "codeowners": [
+  "@trooperthorn"
+ ],
+ "config_flow": true,
+ "dependencies": [],
+ "dhcp": [
+  {
+   "macaddress": "64DBA0*"
+  }
+ ],
+ "documentation": "https://github.com/trooperthorn/ha_int_SleepNumb",
+ "integration_type": "hub",
+ "iot_class": "cloud_polling",
+ "issue_tracker": "https://github.com/trooperthorn/ha_int_SleepNumb/issues",
+ "loggers": [
+  "sleepiq_local"
+ ],
+ "requirements": [],
+ "version": "2026.11.08.1"
 }
