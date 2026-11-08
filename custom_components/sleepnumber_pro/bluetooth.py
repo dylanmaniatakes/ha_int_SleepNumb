@@ -155,6 +155,81 @@ class BleBridgeClient:
         ("ACTG", "right head"), ("ACTG", "right foot"), ("ACGP", "right"), ("AGCP", "right"),
     ]
 
+    # ------------------------------------------------------------------
+    # BlueZ pairing: the controller requires a bonded central before it
+    # answers writes ([org.bluez.Error.NotPermitted] Not paired). HA uses
+    # the host's BlueZ over dbus, so we create the bond ourselves and only
+    # fall back to "put the bed in pairing mode" guidance when that fails.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_not_paired_error(err: Exception) -> bool:
+        text = str(err)
+        return "Not paired" in text or "NotPermitted" in text
+
+    async def _async_pair_via_bluez(self) -> None:
+        """Pair + trust the bed via the BlueZ Device1 API — one-time bond.
+
+        Idempotent: org.bluez.Error.AlreadyExists (= already bonded) counts
+        as done. Writes the bond on whatever BlueZ backs HA's adapter, so it
+        behaves exactly like pairing from the SleepIQ app or bluetoothctl.
+        """
+        try:
+            from dbus_fast import BusType, Message, MessageType, Variant
+            from dbus_fast.aio.message_bus import MessageBus
+        except ImportError as err:
+            raise RuntimeError("dbus_fast (bleak dependency) unavailable — cannot self-pair") from err
+
+        path = "/org/bluez/dev_" + self.address.replace(":", "_").upper()
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        try:
+            async with asyncio.timeout(30):
+                reply = await bus.call(Message(
+                    destination="org.bluez", path=path,
+                    interface="org.bluez.Device1", member="Pair",
+                ))
+            if reply.message_type == MessageType.METHOD_ERROR:
+                err_name = reply.error_name or ""
+                if "AlreadyExists" not in err_name:
+                    raise RuntimeError(f"BlueZ Pair() failed: {err_name}")
+            await bus.call(Message(
+                destination="org.bluez", path=path,
+                interface="org.freedesktop.DBus.Properties", member="Set",
+                body=("org.bluez.Device1", "Trusted", Variant("b", True)),
+            ))
+            _LOGGER.info(
+                "BlueZ bond with %s established and trusted — controller writes should now be accepted",
+                self.address,
+            )
+        finally:
+            bus.disconnect()
+
+    async def _pair_and_retry(self, client, uart, uart_char_obj, job, first_err):
+        """On a NotPermitted/Not-paired refusal: bond via BlueZ inside the
+        open GATT session, then retry the job once. Raises a BleUnavailable
+        whose text carries the pairing-mode instruction when auto-pairing
+        does not land the bond (that text becomes the user-visible retry
+        banner detail)."""
+        _LOGGER.warning(
+            "Bed %s refused the write (not paired) — auto-pairing via BlueZ now; "
+            "if it fails, put the bed in pairing mode before the next attempt",
+            self.address,
+        )
+        try:
+            await self._async_pair_via_bluez()
+        except Exception as pair_err:  # noqa: BLE001
+            raise BleUnavailable(
+                f"Controller requires pairing and automatic BlueZ pairing failed "
+                f"({pair_err}). Put the bed in pairing mode (hold the pairing/"
+                f"Bluetooth button on the base ~5 s until it indicates pairing), "
+                f"then reload the integration."
+            ) from first_err
+        _LOGGER.info(
+            "Retrying %s ASCII command after pairing", self.address
+        )
+        return await job(_AsciiIO(client, uart_char_obj if uart_char_obj is not None else uart))
+
+
     async def _ascii_session(self, job):
         """Open one GATT session, run a job(client), answer via ASCII plane."""
         from bleak_retry_connector import establish_connection
@@ -203,7 +278,14 @@ class BleBridgeClient:
                     _LOGGER.debug("service iteration shape unexpected: %s", err)
                 if uart_char_obj is not None:
                     _LOGGER.debug("ASCII UART char resolved from the device table")
-                    return await job(_AsciiIO(client, uart_char_obj))
+                    try:
+                        return await job(_AsciiIO(client, uart_char_obj))
+                    except Exception as err:  # noqa: BLE001
+                        if self._is_not_paired_error(err):
+                            return await self._pair_and_retry(
+                                client, uart, uart_char_obj, job, err
+                            )
+                        raise
                 if services_found:
                     _LOGGER.warning(
                         "421e00f3 UART char NOT in the service table of %s — got: %s",
@@ -215,7 +297,14 @@ class BleBridgeClient:
                         "the services property both empty) — ASCII probe will fail",
                         self.address,
                     )
-                return await job(_AsciiIO(client, uart))
+                try:
+                    return await job(_AsciiIO(client, uart))
+                except Exception as err:  # noqa: BLE001
+                    if self._is_not_paired_error(err):
+                        return await self._pair_and_retry(
+                            client, uart, uart_char_obj, job, err
+                        )
+                    raise
             finally:
                 await client.disconnect()
 
