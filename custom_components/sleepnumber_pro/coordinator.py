@@ -130,6 +130,7 @@ class SleepNumberStatusCoordinator(_BaseCoordinator):
 
     async def _async_update_data(self) -> None:
         # Prefer a local transport (BLE or on-hub bridge) when configured.
+        local_err: Exception | None = None
         if self.local is not None:
             try:
                 snapshot = await self._local_update()
@@ -138,14 +139,16 @@ class SleepNumberStatusCoordinator(_BaseCoordinator):
                 self.source = getattr(self.local, "source_name", SOURCE_LOCAL)
                 return
             except Exception as err:  # noqa: BLE001 - any local failure -> cloud
+                local_err = err
                 _LOGGER.debug("Local transport unavailable, using cloud: %s", err)
 
         # Cloud fallback — but ONLY when the entry carries credentials; a
         # local-only setup retries later instead of erroring into reauth limbo.
         if not self._has_creds:
+            detail = f": {local_err}" if local_err else ""
             raise UpdateFailed(
-                "Bed not reachable over BLE (local-only setup has no cloud "
-                "fallback); will retry"
+                f"Bed not reachable over BLE (local-only setup has no cloud "
+                f"fallback){detail}; will retry"
             )
         self.source = SOURCE_CLOUD
         try:
