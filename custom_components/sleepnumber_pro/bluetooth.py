@@ -197,6 +197,25 @@ class BleBridgeClient:
         path = "/org/bluez/dev_" + self.address.replace(":", "_").upper()
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         try:
+            # BlueZ nests devices under their adapter ("hci0/dev_…") — never
+            # guess the hci index; enumerate ObjectManager and find the
+            # Device1 object for this address wherever it lives.
+            listing = await bus.call(Message(
+                destination="org.bluez", path="/",
+                interface="org.freedesktop.DBus.ObjectManager",
+                member="GetManagedObjects",
+            ))
+            want = "/dev_" + self.address.replace(":", "_").lower()
+            path = None
+            for obj_path, ifaces in (listing.body[0] if listing.body else {}).items():
+                if "org.bluez.Device1" in ifaces and obj_path.lower().endswith(want):
+                    path = obj_path
+                    break
+            if path is None:
+                raise RuntimeError(
+                    "BlueZ has no Device object for this address (device never "
+                    "discovered by BlueZ) — retry once HA has seen its advertisement"
+                )
             async with asyncio.timeout(30):
                 reply = await bus.call(Message(
                     destination="org.bluez", path=path,
