@@ -202,7 +202,7 @@ class BleBridgeClient:
                     destination="org.bluez", path=path,
                     interface="org.bluez.Device1", member="Pair",
                 ))
-            if reply.message_type == MessageType.METHOD_ERROR:
+            if reply.message_type == MessageType.ERROR:
                 err_name = reply.error_name or ""
                 if "AlreadyExists" not in err_name:
                     raise RuntimeError(f"BlueZ Pair() failed: {err_name}")
