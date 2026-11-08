@@ -195,6 +195,7 @@ class BleBridgeClient:
             raise RuntimeError("dbus_fast (bleak dependency) unavailable — cannot self-pair") from err
 
         path = "/org/bluez/dev_" + self.address.replace(":", "_").upper()
+        agent_registered = False
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         try:
             # BlueZ nests devices under their adapter ("hci0/dev_…") — never
@@ -216,6 +217,58 @@ class BleBridgeClient:
                     "BlueZ has no Device object for this address (device never "
                     "discovered by BlueZ) — retry once HA has seen its advertisement"
                 )
+            # Pairing requires a registered BlueZ agent. Server hosts run
+            # bluetoothd with none, and Pair() then fails immediately with
+            # AuthenticationFailed (or, mid pairing window, cancels at the
+            # confirmation step). Register our own silent agent for the
+            # attempt: NoInputNoOutput = Just Works, no user interaction.
+            from dbus_fast.service import ServiceInterface, dbus_method
+
+            class _JustWorksAgent(ServiceInterface):
+                def __init__(self) -> None:
+                    super().__init__("org.bluez.Agent1")
+
+                @dbus_method()
+                def Release(self) -> None:
+                    pass
+
+                @dbus_method()
+                def RequestPinCode(self, device: str) -> str:
+                    return "000000"
+
+                @dbus_method()
+                def RequestPasskey(self, device: str) -> int:
+                    return 0
+
+                @dbus_method()
+                def DisplayPinCode(self, device: str, pin_code: str) -> None:
+                    pass
+
+                @dbus_method()
+                def RequestConfirmation(self, device: str, passkey: int) -> None:
+                    pass
+
+                @dbus_method()
+                def RequestAuthorization(self, device: str) -> None:
+                    pass
+
+                @dbus_method()
+                def AuthorizeService(self, device: str, uuid: str) -> None:
+                    pass
+
+                @dbus_method()
+                def Cancel(self) -> None:
+                    pass
+
+            agent = _JustWorksAgent()
+            agent_path = "/custom_components/sleepnumber_pro/pairing_agent"
+            bus.export(agent_path, agent)
+            await bus.call(Message(
+                destination="org.bluez", path="/org/bluez",
+                interface="org.bluez.AgentManager1", member="RegisterAgent",
+                body=(agent_path, "NoInputNoOutput"),
+            ))
+            agent_registered = True
             async with asyncio.timeout(30):
                 reply = await bus.call(Message(
                     destination="org.bluez", path=path,
@@ -235,6 +288,14 @@ class BleBridgeClient:
                 self.address,
             )
         finally:
+            if agent_registered:
+                with contextlib.suppress(Exception):
+                    await bus.call(Message(
+                        destination="org.bluez", path="/org/bluez",
+                        interface="org.bluez.AgentManager1",
+                        member="UnregisterAgent",
+                        body=("/custom_components/sleepnumber_pro/pairing_agent",),
+                    ))
             bus.disconnect()
 
     async def _pair_and_retry(self, client, uart, uart_char_obj, job, first_err):
