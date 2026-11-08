@@ -33,6 +33,7 @@ from .sleepiq_local import (
     SleepIQLoginException,
     SleepIQTimeoutException,
 )
+from .sleepiq_local.bed import SleepIQBed
 
 _LOGGER = logging.getLogger(__name__)
 
