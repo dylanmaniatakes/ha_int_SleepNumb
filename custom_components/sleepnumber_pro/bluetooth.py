@@ -321,12 +321,17 @@ class _AsciiIO:
 
     async def command(self, cmd: str, **kwargs) -> str:
         frame = bamkey_ascii.build_ascii_frame(cmd)
-        await self.client.write_gatt_char(self.uart_char, frame, response=True)
+        # Bounded write: a busy/one-connection controller (phone app or scanner
+        # holding the GATT slot) makes the ATT write hang forever — time it out
+        # so the coordinator surfaces "timed out" instead of wedging setup.
+        async with asyncio.timeout(20):
+            await self.client.write_gatt_char(self.uart_char, frame, response=True)
         await asyncio.sleep(0.05)
         for _ in range(12):
             try:
-                resp = await self.client.read_gatt_char(self.uart_char)
-            except Exception:  # noqa: BLE001 — transient; retry inside window
+                async with asyncio.timeout(8):
+                    resp = await self.client.read_gatt_char(self.uart_char)
+            except (TimeoutError, Exception):  # noqa: BLE001 — transient; retry inside window
                 resp = b""
             frames = bamkey_ascii.parse_ascii_frames(resp or b"")
             if frames:
@@ -336,12 +341,14 @@ class _AsciiIO:
 
     async def command_prebuilt(self, frame: bytes) -> list[str]:
         """Write a pre-built frame (e.g. a big BAMG batch); read the response."""
-        await self.client.write_gatt_char(self.uart_char, frame, response=True)
+        async with asyncio.timeout(25):
+            await self.client.write_gatt_char(self.uart_char, frame, response=True)
         await asyncio.sleep(0.1)
         for _ in range(15):
             try:
-                resp = await self.client.read_gatt_char(self.uart_char)
-            except Exception:  # noqa: BLE001
+                async with asyncio.timeout(8):
+                    resp = await self.client.read_gatt_char(self.uart_char)
+            except (TimeoutError, Exception):  # noqa: BLE001
                 resp = b""
             frames = bamkey_ascii.parse_ascii_frames(resp or b"")
             if frames:
