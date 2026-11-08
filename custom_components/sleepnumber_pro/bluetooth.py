@@ -266,7 +266,7 @@ class BleBridgeClient:
             await bus.call(Message(
                 destination="org.bluez", path="/org/bluez",
                 interface="org.bluez.AgentManager1", member="RegisterAgent",
-                body=(agent_path, "NoInputNoOutput"),
+                body=[agent_path, "NoInputNoOutput"], signature="ss",
             ))
             agent_registered = True
             async with asyncio.timeout(30):
@@ -281,7 +281,8 @@ class BleBridgeClient:
             await bus.call(Message(
                 destination="org.bluez", path=path,
                 interface="org.freedesktop.DBus.Properties", member="Set",
-                body=("org.bluez.Device1", "Trusted", Variant("b", True)),
+                body=["org.bluez.Device1", "Trusted", Variant("b", True)],
+                signature="ssv",
             ))
             _LOGGER.info(
                 "BlueZ bond with %s established and trusted — controller writes should now be accepted",
@@ -294,7 +295,8 @@ class BleBridgeClient:
                         destination="org.bluez", path="/org/bluez",
                         interface="org.bluez.AgentManager1",
                         member="UnregisterAgent",
-                        body=("/custom_components/sleepnumber_pro/pairing_agent",),
+                        body=["/custom_components/sleepnumber_pro/pairing_agent"],
+                        signature="s",
                     ))
             bus.disconnect()
 
