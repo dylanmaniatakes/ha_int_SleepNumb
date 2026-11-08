@@ -508,7 +508,16 @@ class BleBridgeClient:
         try:
             await self._ascii_command("UBLG")
         except Exception as err:  # noqa: BLE001 — no ASCII plane here: fall back to MCR
-            _LOGGER.warning("ASCII probe to %s failed (%s); trying legacy MCR", self.address, err)
+            _LOGGER.warning(
+                "ASCII probe to %s failed (%s); trying legacy MCR",
+                self.address, err,
+            )
+            import traceback
+            _LOGGER.warning(
+                "ASCII probe failure detail (traceback above the warning is "
+                "the integration's pairing/GATT work): %s",
+                traceback.format_exc(),
+            )
             self.mode = "mcr"
             return False
         self.mode = "ascii"
