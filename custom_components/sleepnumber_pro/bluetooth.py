@@ -171,13 +171,30 @@ class BleBridgeClient:
                 # controller (fuzion service 09d23fae) exposes 421e00f3…; the
                 # BAM pump hub (ffffd1fd) uses efee2. Resolve from the live
                 # service table so one client class serves either radio.
+                # bleak exposes the collection either as a property (recent
+                # versions) or via awaitable get_services() (older); try both
+                # and LOG what resolved — silent fallbacks cost an hour before.
                 uart = RX_UUID
+                services = None
                 with contextlib.suppress(Exception):
-                    for service in client.services:
+                    services = await client.get_services()
+                if not services:
+                    services = getattr(client, "services", None)
+                try:
+                    for service in services or []:
                         for char in service.characteristics:
                             if char.uuid.lower().startswith("421e00f3"):
                                 uart = char.uuid
                                 break
+                        if uart != RX_UUID:
+                            break
+                except TypeError as err:
+                    _LOGGER.debug("service iteration shape unexpected: %s", err)
+                _LOGGER.debug(
+                    "ASCII UART char resolved to %s from %s",
+                    uart,
+                    "the device service table" if uart != RX_UUID else "the legacy default",
+                )
                 return await job(_AsciiIO(client, uart))
             finally:
                 await client.disconnect()
