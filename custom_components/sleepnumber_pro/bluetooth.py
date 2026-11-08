@@ -164,8 +164,22 @@ class BleBridgeClient:
 
     @staticmethod
     def _is_not_paired_error(err: Exception) -> bool:
-        text = str(err)
-        return "Not paired" in text or "NotPermitted" in text
+        """Match every observed refusal shape for writes without a bond:
+        BlueZ-side refusals (Not paired / NotPermitted) and bed-side ATT
+        errors on an unencrypted link (GATT error 15 = Insufficient
+        encryption, 13 = Insufficient authentication, 14 = Unlikely Error
+        seen right after the 15s on this controller)."""
+        text = str(err).lower()
+        return any(
+            marker in text
+            for marker in (
+                "not paired",
+                "notpermitted",
+                "insufficient encryption",
+                "insufficient authentication",
+                "unlikely error",
+            )
+        )
 
     async def _async_pair_via_bluez(self) -> None:
         """Pair + trust the bed via the BlueZ Device1 API — one-time bond.
@@ -227,7 +241,20 @@ class BleBridgeClient:
         _LOGGER.info(
             "Retrying %s ASCII command after pairing", self.address
         )
-        return await job(_AsciiIO(client, uart_char_obj if uart_char_obj is not None else uart))
+        try:
+            return await job(_AsciiIO(client, uart_char_obj if uart_char_obj is not None else uart))
+        except Exception as retry_err:  # noqa: BLE001
+            if self._is_not_paired_error(retry_err):
+                # Bond exists but the bed still refuses (e.g. link did not
+                # re-encrypt, or the bed wants an explicit pairing window) —
+                # surface the pairing-mode instruction in the retry banner.
+                raise BleUnavailable(
+                    f"Bed is bonded but still refuses the ASCII write "
+                    f"({retry_err}). Put the bed in pairing mode (hold the "
+                    f"pairing/Bluetooth button on the base ~5 s until it "
+                    f"indicates pairing), then reload the integration."
+                ) from retry_err
+            raise
 
 
     async def _ascii_session(self, job):
