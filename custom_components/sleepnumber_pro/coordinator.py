@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -37,6 +37,7 @@ from .sleepiq_local import (
     SleepIQLoginException,
     SleepIQTimeoutException,
 )
+from .sleepiq_local.bed import SleepIQBed
 from .sleepiq_local.consts import Side
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,10 +83,15 @@ class _BaseCoordinator(DataUpdateCoordinator[None]):
             hass,
             _LOGGER,
             config_entry=entry,
-            name=f"{entry.data[CONF_USERNAME]}@{DOMAIN}:{name}",
+            name=f"{entry.data[CONF_USERNAME] if entry.data.get(CONF_USERNAME) else 'local'}@{DOMAIN}:{name}",
             update_interval=interval,
         )
         self.client = client
+
+    @property
+    def _has_creds(self) -> bool:
+        """Cloud is only consulted when the entry carries credentials."""
+        return bool(self.config_entry.data.get(CONF_PASSWORD))
 
     def _reraise(self, err: Exception) -> None:
         """Translate library errors into coordinator outcomes."""
@@ -134,7 +140,13 @@ class SleepNumberStatusCoordinator(_BaseCoordinator):
             except Exception as err:  # noqa: BLE001 - any local failure -> cloud
                 _LOGGER.debug("Local transport unavailable, using cloud: %s", err)
 
-        # Cloud fallback.
+        # Cloud fallback — but ONLY when the entry carries credentials; a
+        # local-only setup retries later instead of erroring into reauth limbo.
+        if not self._has_creds:
+            raise UpdateFailed(
+                "Bed not reachable over BLE (local-only setup has no cloud "
+                "fallback); will retry"
+            )
         self.source = SOURCE_CLOUD
         try:
             await self.client.fetch_bed_statuses()
@@ -235,6 +247,11 @@ class SleepNumberSettingsCoordinator(_BaseCoordinator):
         self.fw_state = {}
 
     async def _async_update_data(self) -> None:
+        if not self._has_creds:
+            # Local-only entry: no cloud settings exist. The foot-warm state poll
+            # below is the whole update.
+            await self._poll_foot_warm_ascii()
+            return
         for bed in self.client.beds.values():
             try:
                 await bed.fetch_pause_mode()
@@ -250,21 +267,25 @@ class SleepNumberSettingsCoordinator(_BaseCoordinator):
                 self._reraise(err)
             except SleepIQAPIException as err:
                 _LOGGER.debug("Responsive Air unavailable for %s: %s", bed.name, err)
-        # ASCII plane (360-gen controller): foot-warm state lives here; the fast
-        # status coordinator doesn't poll it, so this slow lane does.
+        await self._poll_foot_warm_ascii()
+
+    async def _poll_foot_warm_ascii(self) -> None:
+        """ASCII plane (360-gen controller): foot-warm state lives here; the fast
+        status coordinator doesn't poll it, so this slow lane does."""
         ble = getattr(self, "_ble_ref", None)
-        if ble is not None and getattr(ble, "mode", None) == "ascii":
-            fw: dict[str, str | None] = {}
-            for side in ("left", "right"):
-                try:
-                    raw = await ble._ascii_command(f"FWTG {side}")
-                    state = json.loads(raw)
-                    own = state.get(side) if isinstance(state, dict) else None
-                    fw[side] = own.split()[0] if isinstance(own, str) and own.split() else "off"
-                except Exception as err:  # noqa: BLE001 — slow lane, keep last value
-                    _LOGGER.debug("FWTG %s unavailable: %s", side, err)
-                    fw.setdefault(side, None)
-            self.fw_state = fw if fw else getattr(self, "fw_state", {})
+        if ble is None or getattr(ble, "mode", None) != "ascii":
+            return
+        fw: dict[str, str | None] = {}
+        for side in ("left", "right"):
+            try:
+                raw = await ble._ascii_command(f"FWTG {side}")
+                state = json.loads(raw)
+                own = state.get(side) if isinstance(state, dict) else None
+                fw[side] = own.split()[0] if isinstance(own, str) and own.split() else "off"
+            except Exception as err:  # noqa: BLE001 — slow lane, keep last value
+                _LOGGER.debug("FWTG %s unavailable: %s", side, err)
+                fw.setdefault(side, None)
+        self.fw_state = fw if fw else getattr(self, "fw_state", {})
 
 
 class SleepNumberSleepDataCoordinator(_BaseCoordinator):
@@ -274,6 +295,10 @@ class SleepNumberSleepDataCoordinator(_BaseCoordinator):
         super().__init__(hass, entry, client, "sleep", SLEEP_DATA_INTERVAL)
 
     async def _async_update_data(self) -> None:
+        if not self._has_creds:
+            # Local-only entry: nightly sleep-health records live in the cloud;
+            # nothing to fetch. Sensors stay unknown instead of erroring.
+            return
         tasks = [
             sleeper.fetch_sleep_data()
             for bed in self.client.beds.values()

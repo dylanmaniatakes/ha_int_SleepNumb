@@ -9,6 +9,21 @@ SleepIQ phone app uses when you're standing next to the bed. It was reverse-engi
 the app itself and then **verified live against Dylan's bed**: every frame the integration
 now sends was captured from the real app session and matches byte-for-byte.
 
+## Two ways to add it (v2026.11.08.2)
+1. **Local-only (the point of this release):** the setup form now lets you leave
+   email/password **blank** and just give a **bed controller BLE address**. The entry then
+   runs with NO SleepIQ account: sleep number, presets, under-bed light, foot warmer, live
+   per-side pressure and pressure-derived presence all work cloud-free. The form errors
+   helpfully if you give it neither credentials nor an address.
+   - Where's the address? Your bed controller is advertising as **`Smart bed 07C27D`**
+     (MAC `80:16:09:07:C2:7D`) — or use any BLE scanner to read it off the
+     `09d23fae-90e6-44c2-95b6-0b3d0f1abf25` service advertisement.
+2. **Credentials + BLE (as before):** sign in for the cloud sensors (sleep score, HR,
+   HRV, Responsive Air) and the integration uses BLE locally whenever in range.
+
+> Pairing note: putting the bed into pair mode is NOT needed — the controller accepts GATT
+> connections from any bonded central (Ble Scanner connected instantly during testing).
+
 ## What you get after installing
 With a Bluetooth adapter or ESPHome Bluetooth Proxy in range of the bed (the same range
 limit the phone app has — about 8 ft), and a BLE address configured on the integration
@@ -49,7 +64,7 @@ Response grammar, decoded: `PASS:` + value for success (bare ack for sets, value
 reads, JSON arrays for batches), `FAIL:<code>` for refusals. Codes are the app's own
 StatusCode enum (`INVALID_BAMKEY`=19, protocol failures 16–21, format failures 32+).
 
-## Files changed
+## Files changed (v2026.11.08.1)
 - `custom_components/sleepnumber_pro/bamkey_ascii.py` — **new**: framing
   (`fUzIoN` + length + ASCII + CRC32, length includes the CRC), parser, SNCG/BAMG
   response handling, snapshot mapping, presence helper.
@@ -66,11 +81,17 @@ StatusCode enum (`INVALID_BAMKEY`=19, protocol failures 16–21, format failures
   words before giving up.
 - `custom_components/sleepnumber_pro/light.py` — **new**: the under-bed light entity.
 - `custom_components/sleepnumber_pro/foot_warm.py` — **new**: per-side foot-warmer selects.
+- `custom_components/sleepnumber_pro/button.py` — stop-pump routes to `PSNI` (the app's
+  own interrupt) and calibrate tries `PCAL` on the ASCII plane.
 - `custom_components/sleepnumber_pro/__init__.py` — Light platform registered; the
-  ASCII capability flag gates the new platforms; info log on first detection.
+  ASCII capability flag gates the new platforms; **local-only setup branch** (no-credential
+  entries synthesise the bed + sleepers from the BLE address); info log on first detection.
+- `custom_components/sleepnumber_pro/config_flow.py` — credentials and BLE address are
+  now OPTIONAL fields; local-only entries validate by BLE reachability instead of a
+  cloud login (3 new flow tests).
 - `custom_components/sleepnumber_pro/sensor.py` — pressure sensors enabled by default
   (they now have a live local source).
-- `custom_components/sleepnumber_pro/strings.json` — names for the new entities.
+- `custom_components/sleepnumber_pro/strings.json` — names for the new entities + flow strings.
 - `tests/test_ascii_snapshot.py` — **new**: 10 tests replaying the real wire responses
   (batch mapping, short batches, FAIL tolerance, presence thresholds, frame round-trips).
 
@@ -79,11 +100,14 @@ StatusCode enum (`INVALID_BAMKEY`=19, protocol failures 16–21, format failures
 2. Copy this whole `custom_components/sleepnumber_pro/` over the old one (it is additive;
    your existing config entries, entities and entities' registry IDs are unchanged).
 3. Restart Home Assistant.
-4. Confirm in **Settings → Integrations** that Sleep Number reloaded cleanly, then look at
-   a bed device: you should see `Under-bed light`, per-sleeper `Foot warmer` selects, and
-   live `Pressure` sensors. The log line
+4. **Local-only entry:** Settings → Integrations → Add Integration → Sleep Number →
+   leave email/password BLANK, paste the controller BLE address
+   (`80:16:09:07:C2:7D` for Dylan's bed) → submit. It validates by BLE reachability
+   (the bed must be advertising to something in range) and creates a cloud-free entry.
+5. Confirm entities: `Under-bed light`, per-sleeper `Foot warmer` selects, live
+   `Pressure` sensors. The log line
    `360-gen controller answered on the ASCII bamkey plane` confirms local mode.
-5. **First night**: leave it running — the pressure baselines self-learn for presence.
+6. **First night**: leave it running — the pressure baselines self-learn for presence.
 
 ## BLE prerequisite
 The integration needs to *reach* the controller: a BT adapter on the HA host in range, or

@@ -3,12 +3,13 @@
   "step": {
    "user": {
     "title": "Sleep Number (SleepIQ) account",
-    "description": "Sign in with your SleepIQ account. If you have rooted your hub and installed the local bridge, add its address to prefer local, cloud-free operation.",
+    "description": "Sign in with your SleepIQ account for cloud sensors, OR leave the account fields blank and give a BLE address to run fully local to the 360-gen bed controller (sleep number, presets, under-bed light, foot warmer, live pressure and pressure-derived presence \u2014 no cloud needed).",
     "data": {
      "username": "Email",
      "password": "Password",
-     "local_host": "Local hub address (optional)",
-     "local_token": "Local bridge token (optional)"
+     "local_host": "Local hub bridge address (optional)",
+     "local_token": "Local bridge token (optional)",
+     "ble_address": "Bed controller BLE address"
     }
    },
    "reconfigure": {
@@ -31,7 +32,8 @@
   },
   "error": {
    "invalid_auth": "Invalid email or password.",
-   "cannot_connect": "Could not reach the SleepIQ service. Check your connection and try again."
+   "cannot_connect": "Could not reach the SleepIQ service. Check your connection and try again.",
+   "missing_credentials_or_ble": "Enter your SleepIQ account, or a bed BLE address for local-only setup."
   },
   "abort": {
    "already_configured": "This SleepIQ account is already set up.",

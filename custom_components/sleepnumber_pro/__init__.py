@@ -52,39 +52,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: SleepNumberConfigEntry) 
     session = async_create_clientsession(hass)
     client = AsyncSleepIQ(client_session=session)
 
-    try:
-        await client.login(entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD])
-    except SleepIQLoginException as err:
-        raise ConfigEntryAuthFailed(str(err)) from err
-    except SleepIQTimeoutException as err:
-        raise ConfigEntryNotReady(str(err) or "Timed out during authentication") from err
-    except SleepIQConnectionException as err:
-        raise ConfigEntryNotReady(str(err) or "Cannot reach SleepIQ") from err
+    has_creds = bool(entry.data.get(CONF_PASSWORD))
 
-    try:
-        await client.init_beds()
-    except SleepIQTimeoutException as err:
-        raise ConfigEntryNotReady(str(err) or "Timed out during initialization") from err
-    except SleepIQConnectionException as err:
-        raise ConfigEntryNotReady(str(err) or "Cannot reach SleepIQ") from err
-    except SleepIQAPIException as err:
-        raise ConfigEntryNotReady(str(err) or "Error reading from SleepIQ") from err
-
-    # Discover which subsystems are actually reachable right now, so platforms
-    # only create entities for capabilities the cloud still serves.
     capabilities = {
         "foundation": any(bed.foundation.type for bed in client.beds.values()),
         "responsive_air": False,
         "local": False,
         "ble": False,
     }
-    for bed in client.beds.values():
+
+    if has_creds:
         try:
-            await bed.fetch_responsive_air()
-            if bed.responsive_air:
-                capabilities["responsive_air"] = True
+            await client.login(entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD])
+        except SleepIQLoginException as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except SleepIQTimeoutException as err:
+            raise ConfigEntryNotReady(str(err) or "Timed out during authentication") from err
+        except SleepIQConnectionException as err:
+            raise ConfigEntryNotReady(str(err) or "Cannot reach SleepIQ") from err
+
+        try:
+            await client.init_beds()
+        except SleepIQTimeoutException as err:
+            raise ConfigEntryNotReady(str(err) or "Timed out during initialization") from err
+        except SleepIQConnectionException as err:
+            raise ConfigEntryNotReady(str(err) or "Cannot reach SleepIQ") from err
         except SleepIQAPIException as err:
-            _LOGGER.debug("Responsive Air not available for %s: %s", bed.name, err)
+            raise ConfigEntryNotReady(str(err) or "Error reading from SleepIQ") from err
+
+        # Discover which subsystems are actually reachable right now, so platforms
+        # only create entities for capabilities the cloud still serves.
+        for bed in client.beds.values():
+            try:
+                await bed.fetch_responsive_air()
+                if bed.responsive_air:
+                    capabilities["responsive_air"] = True
+            except SleepIQAPIException as err:
+                _LOGGER.debug("Responsive Air not available for %s: %s", bed.name, err)
+    else:
+        # Cloud-free setup: the 360-gen controller over BLE is the whole story.
+        _LOGGER.info("No credentials configured — local-only (BLE) setup")
 
     # Local transports, preferred over cloud when reachable. Order of preference:
     # BLE (no root, in-range) -> on-hub bridge (rooted) -> cloud fallback.
@@ -100,6 +107,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: SleepNumberConfigEntry) 
                 "Bed %s not reachable over BLE yet (need an in-range adapter or "
                 "proxy); using cloud until it is", ble_addr
             )
+    elif not has_creds:
+        # Cloud-free setup REQUIRES a BLE target; without one there is nothing.
+        raise ConfigEntryNotReady(
+            "Local-only setup needs a bed BLE address (or add credentials)"
+        )
+
+    if not has_creds:
+        # Local-only: synthesise the bed + sleeper objects from the BLE address.
+        bed_id = ble_addr.replace(":", "").lower()
+        data = {
+            "name": "Sleep Number Bed",
+            "bedId": bed_id,
+            "macAddress": ble_addr,
+            "sleeperLeftId": f"{bed_id}_L",
+            "sleeperRightId": f"{bed_id}_R",
+        }
+        bed = SleepIQBed(client, data)
+        bed.model = "Local (ASCII controller)"
+        client.beds[bed.id] = bed
+        capabilities["foundation"] = True
 
     if local is None and (
         host := (entry.data.get(CONF_LOCAL_HOST) or entry.options.get(CONF_LOCAL_HOST))
@@ -132,6 +159,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SleepNumberConfigEntry) 
         capabilities=capabilities,
         ble=ble,
     )
+    capabilities["creds"] = has_creds
     # Mirror the ASCII-plane detection into capabilities for the platforms
     # (light/foot warm only register when the 360-gen controller answered).
     if ble is not None and ble.mode == "ascii":

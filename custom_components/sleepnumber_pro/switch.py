@@ -19,6 +19,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up switches."""
     data = entry.runtime_data
+    # Privacy pause / Responsive Air are cloud-plane commands (set_pause_mode,
+    # fetch_responsive_air): a local-only entry has no cloud session, so those
+    # entities would never work — don't register them.
+    if not data.capabilities.get("creds", True):
+        return
     entities: list[SwitchEntity] = []
     for bed in data.client.beds.values():
         entities.append(PrivacySwitch(data.settings, bed))
