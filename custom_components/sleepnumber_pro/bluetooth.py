@@ -232,28 +232,30 @@ class BleBridgeClient:
                 def Release(self) -> None:
                     pass
 
+                # dbus-fast requires D-Bus signature STRINGS as method
+                # annotations ("s"/"u"), not python types.
                 @dbus_method()
-                def RequestPinCode(self, device: str) -> str:
+                def RequestPinCode(self, device: "s") -> "s":
                     return "000000"
 
                 @dbus_method()
-                def RequestPasskey(self, device: str) -> int:
+                def RequestPasskey(self, device: "s") -> "u":
                     return 0
 
                 @dbus_method()
-                def DisplayPinCode(self, device: str, pin_code: str) -> None:
+                def DisplayPinCode(self, device: "s", pin_code: "s") -> None:
                     pass
 
                 @dbus_method()
-                def RequestConfirmation(self, device: str, passkey: int) -> None:
+                def RequestConfirmation(self, device: "s", passkey: "u") -> None:
                     pass
 
                 @dbus_method()
-                def RequestAuthorization(self, device: str) -> None:
+                def RequestAuthorization(self, device: "s") -> None:
                     pass
 
                 @dbus_method()
-                def AuthorizeService(self, device: str, uuid: str) -> None:
+                def AuthorizeService(self, device: "s", uuid: "s") -> None:
                     pass
 
                 @dbus_method()
