@@ -188,14 +188,18 @@ class BleBridgeClient:
                     for service in services or []:
                         services_found = True
                         for char in service.characteristics:
-                            table.append(f"{char.uuid} props={sorted(c.name for c in char.properties)}")
+                            # bleak's properties = a plain set of strings
+                            # ("read"/"write"/...) — not objects with .name.
+                            table.append(
+                                f"{char.uuid} props={sorted(char.properties)}"
+                            )
                             if char.uuid.lower().startswith("421e00f3"):
                                 uart = char.uuid
                                 uart_char_obj = char
                                 break
                         if uart_char_obj is not None:
                             break
-                except TypeError as err:
+                except (TypeError, AttributeError) as err:
                     _LOGGER.debug("service iteration shape unexpected: %s", err)
                 if uart_char_obj is not None:
                     _LOGGER.debug("ASCII UART char resolved from the device table")
