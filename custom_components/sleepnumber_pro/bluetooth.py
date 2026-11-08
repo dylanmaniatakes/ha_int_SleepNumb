@@ -167,7 +167,18 @@ class BleBridgeClient:
                 __import__("bleak").BleakClient, device, self.address
             )
             try:
-                return await job(_AsciiIO(client, RX_UUID))
+                # The UART char differs by radio generation: the 360-gen
+                # controller (fuzion service 09d23fae) exposes 421e00f3…; the
+                # BAM pump hub (ffffd1fd) uses efee2. Resolve from the live
+                # service table so one client class serves either radio.
+                uart = RX_UUID
+                with contextlib.suppress(Exception):
+                    for service in client.services:
+                        for char in service.characteristics:
+                            if char.uuid.lower().startswith("421e00f3"):
+                                uart = char.uuid
+                                break
+                return await job(_AsciiIO(client, uart))
             finally:
                 await client.disconnect()
 
@@ -254,11 +265,13 @@ class BleBridgeClient:
 
         Records the mode so the coordinator can prefer ASCII and still fall
         back to the binary MCR path (older BAM pump firmware) when this hub
-        generation is not present.
+        generation is not present. Failures are logged once per probe so a
+        wedged retry loop is diagnosable from the HA log.
         """
         try:
             await self._ascii_command("UBLG")
-        except Exception:  # noqa: BLE001 — no ASCII plane here: fall back to MCR
+        except Exception as err:  # noqa: BLE001 — no ASCII plane here: fall back to MCR
+            _LOGGER.warning("ASCII probe to %s failed (%s); trying legacy MCR", self.address, err)
             self.mode = "mcr"
             return False
         self.mode = "ascii"
