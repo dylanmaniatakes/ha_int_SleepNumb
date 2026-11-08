@@ -172,29 +172,45 @@ class BleBridgeClient:
                 # BAM pump hub (ffffd1fd) uses efee2. Resolve from the live
                 # service table so one client class serves either radio.
                 # bleak exposes the collection either as a property (recent
-                # versions) or via awaitable get_services() (older); try both
-                # and LOG what resolved — silent fallbacks cost an hour before.
+                # versions) or via awaitable get_services() (older); try both.
+                # If neither yields the fuzion char, dump the table once — that
+                # dump answers "connected to what?" with zero guessing.
                 uart = RX_UUID
+                uart_char_obj = None
                 services = None
                 with contextlib.suppress(Exception):
                     services = await client.get_services()
                 if not services:
                     services = getattr(client, "services", None)
+                table: list[str] = []
+                services_found = False
                 try:
                     for service in services or []:
+                        services_found = True
                         for char in service.characteristics:
+                            table.append(f"{char.uuid} props={sorted(c.name for c in char.properties)}")
                             if char.uuid.lower().startswith("421e00f3"):
                                 uart = char.uuid
+                                uart_char_obj = char
                                 break
-                        if uart != RX_UUID:
+                        if uart_char_obj is not None:
                             break
                 except TypeError as err:
                     _LOGGER.debug("service iteration shape unexpected: %s", err)
-                _LOGGER.debug(
-                    "ASCII UART char resolved to %s from %s",
-                    uart,
-                    "the device service table" if uart != RX_UUID else "the legacy default",
-                )
+                if uart_char_obj is not None:
+                    _LOGGER.debug("ASCII UART char resolved from the device table")
+                    return await job(_AsciiIO(client, uart_char_obj))
+                if services_found:
+                    _LOGGER.warning(
+                        "421e00f3 UART char NOT in the service table of %s — got: %s",
+                        self.address, table,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "No service table could be read from %s (get_services and "
+                        "the services property both empty) — ASCII probe will fail",
+                        self.address,
+                    )
                 return await job(_AsciiIO(client, uart))
             finally:
                 await client.disconnect()
